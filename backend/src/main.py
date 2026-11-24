@@ -574,6 +574,21 @@ Susun satu narasi laporan terpadu (2-4 paragraf) dari dataset berikut: "{judul_d
 DATA:
 {json.dumps(dataset_data, ensure_ascii=False, indent=2)}
 """
+    # 1. Penyedia utama: Google Gemini (mencoba beberapa model secara berurutan)
+    if gemini_client is not None:
+        for model_name in dict.fromkeys(GEMINI_MODELS):
+            try:
+                respon = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"temperature": 0.2},
+                )
+                if respon and respon.text:
+                    return respon.text.strip()
+            except Exception:
+                continue
+
+    # 2. Cadangan kedua: Groq (opsional, aktif bila GROQ_API_KEYS diisi)
     if groq_client is not None:
         try:
             respon = groq_client.chat.completions.create(
@@ -581,22 +596,13 @@ DATA:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
-            return respon.choices[0].message.content.strip()
+            konten = respon.choices[0].message.content
+            if konten:
+                return konten.strip()
         except Exception:
             pass
 
-    if gemini_client is not None:
-        for model_name in dict.fromkeys(GEMINI_MODELS):
-            try:
-                respon = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
-                if respon and respon.text:
-                    return respon.text.strip()
-            except Exception:
-                continue
-
+    # 3. Fallback terakhir: penyusun narasi lokal berbasis aturan (tanpa model generatif)
     return _susun_narasi_lokal(dataset_data)
 
 

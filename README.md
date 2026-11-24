@@ -61,7 +61,7 @@ Penyusunan laporan statistik daerah menuntut ketelitian tinggi dalam merangkum t
 | **Verifikasi Data Sumber** | Tabel data mentah JSON lengkap dengan pencarian baris untuk membuktikan keakuratan setiap angka. |
 | **Ekspor Dokumen** | Salin teks, unduh `.txt`, atau unduh `.doc` dengan kop UPTD Statistik Diskominsa Aceh. |
 | **Riwayat Sesi** | Narasi yang telah dibuat tersimpan selama sesi browser dan dapat dibuka kembali tanpa generate ulang. |
-| **Fallback Bertingkat** | Groq (opsional), lalu beberapa model Gemini, lalu penyusun narasi lokal berbasis aturan, sehingga sistem tetap menghasilkan narasi walau layanan LLM sibuk. |
+| **Fallback Bertingkat** | Google Gemini (beberapa model berurutan) sebagai penyedia utama, Groq (opsional) sebagai cadangan kedua, lalu penyusun narasi lokal berbasis aturan, sehingga sistem tetap menghasilkan narasi walau layanan LLM sibuk. |
 
 ---
 
@@ -76,7 +76,7 @@ flowchart LR
     BE --> SDA["API Satu Data Aceh"]
     BE --> SB[("Supabase PostgreSQL: dataset_katalog")]
     BE --> CACHE[("katalog_cache.json (cadangan lokal)")]
-    BE --> LLM["LLM: Groq (opsional) / Google Gemini"]
+    BE --> LLM["LLM: Google Gemini (utama) / Groq (cadangan)"]
     BE --> LOKAL["Penyusun Narasi Lokal (fallback)"]
 ```
 
@@ -138,7 +138,8 @@ Ringkasan tahapan:
 | **Grounding Data** | LLM hanya menerima data JSON hasil `GET` ke Satu Data Aceh, bukan pengetahuan umum model. |
 | **Pembersihan Input** | 24 atribut metadata (kode wilayah, timestamp, dan sejenisnya) dibuang agar model tidak salah membaca kode sebagai indikator. |
 | **Prompt Ketat** | Instruksi wajib: angka harus persis sesuai data, tidak dibulatkan, tidak diubah, tidak ditebak, serta wajib menyebut wilayah dan tahun. |
-| **Temperatur Rendah** | Pemanggilan Groq menggunakan `temperature=0.3` untuk mengurangi variasi kreatif. |
+| **Guard Dataset Kosong** | Jika seluruh dataset terpilih tidak memiliki baris data, pemanggilan LLM diblokir dan `GET /narasi` mengembalikan pesan resmi `"Data tidak tersedia untuk dataset yang dipilih."` sehingga model tidak pernah mengarang narasi tanpa data. Dataset kosong dalam pilihan gabungan juga dilewati dan dilaporkan pada kolom `pesan`. |
+| **Temperatur Rendah** | Gemini dipanggil dengan `temperature=0.2` dan Groq dengan `temperature=0.3` untuk menekan variasi kreatif dan menjaga konsistensi angka. |
 | **Audit Manual** | Tab **Verifikasi Data Sumber** menampilkan seluruh baris data mentah sehingga setiap angka dapat dicek ulang. |
 | **Fallback Deterministik** | Jika seluruh LLM gagal, `_susun_narasi_lokal()` menyusun narasi berbasis aturan langsung dari data tanpa model generatif. |
 
@@ -306,7 +307,7 @@ Hasil build tersimpan di `frontend/dist/`. Untuk backend di domain berbeda, atur
 | `POST` | `/dataset/sinkronkan` | Tidak ada | Menarik seluruh halaman katalog dari Satu Data Aceh, menyimpannya ke Supabase, lalu mengembalikan jumlah dan daftar dataset. |
 | `GET` | `/cari-dataset` | `kata_kunci` (str), `limit` (int, default `100`) | Mencari dataset berdasarkan kata kunci judul. |
 | `GET` | `/tahun-dataset` | `uuid` (str, wajib) | Mengembalikan daftar tahun yang benar-benar tersedia pada dataset. |
-| `GET` | `/narasi` | `uuid` (list, wajib), `judul` (list, opsional) | Mengambil data dari satu atau beberapa dataset, mengekstrak indikator, lalu menyusun narasi laporan formal. |
+| `GET` | `/narasi` | `uuid` (list, wajib), `judul` (list, opsional) | Mengambil data dari satu atau beberapa dataset, mengekstrak indikator, lalu menyusun narasi laporan formal. Setiap dataset diproses hingga **40 baris indikator** pertama agar prompt tetap ringkas dan fokus. |
 
 ### Contoh Respons
 
@@ -410,6 +411,7 @@ Hasil build tersimpan di `frontend/dist/`. Untuk backend di domain berbeda, atur
       <b>NPM</b>: 2308107010004<br/>
       <b>Program Studi</b>: S1 Informatika, FMIPA Universitas Syiah Kuala<br/>
       <b>Instansi Mitra</b>: UPTD Statistik, Diskominsa Aceh<br/>
+      <b>Dosen Pembimbing</b>: Kikye Martiwi Sukiakhy, S.T., M.Kom.<br/>
       <b>Pembimbing Lapangan</b>: Zulham Efendi Irfan, S.H.I, S.H, M.Si
     </td>
   </tr>
