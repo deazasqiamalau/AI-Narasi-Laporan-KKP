@@ -30,7 +30,7 @@ button:focus-visible,
 a:focus-visible,
 select:focus-visible,
 input:focus-visible {
-  outline: 2px solid rgba(220, 38, 38, 0.35);
+  outline: 2px solid rgba(220, 38, 38, 0.4);
   outline-offset: 2px;
 }
 
@@ -38,7 +38,62 @@ input:focus-visible {
   min-height: 100vh;
 }
 
-/* Custom subtle scrollbar for dataset list & data tables */
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes float-badge {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-page {
+  animation: page-fade-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.animate-modal {
+  animation: modal-pop 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.animate-float {
+  animation: float-badge 3.8s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 16s linear infinite;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;

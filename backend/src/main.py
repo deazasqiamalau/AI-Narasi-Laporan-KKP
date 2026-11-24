@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -196,6 +198,13 @@ FIELD_METADATA = {
 }
 
 _KATALOG_MEMORI: list[dict[str, str]] = []
+_DUMMY_UUIDS = {
+    "aceh-penduduk-2022-2024",
+    "aceh-pendidikan-sekolah-dasar",
+    "aceh-kesehatan-sarana",
+    "aceh-kemiskinan-kabkota",
+    "aceh-ekonomi-pad",
+}
 
 
 def _muat_cache_file() -> list[dict[str, str]]:
@@ -203,7 +212,9 @@ def _muat_cache_file() -> list[dict[str, str]]:
         try:
             data = json.loads(KATALOG_CACHE_FILE.read_text(encoding="utf-8"))
             if isinstance(data, list) and len(data) > 0:
-                return data
+                bersih = [d for d in data if d.get("uuid") not in _DUMMY_UUIDS]
+                if len(bersih) >= 50:
+                    return bersih
         except Exception:
             pass
     return []
@@ -265,18 +276,18 @@ def baca_katalog() -> list:
                 for row in rows:
                     uuid_val = str(row.get("uuid") or "").strip()
                     judul_val = str(row.get("judul") or "").strip()
-                    if uuid_val and judul_val and uuid_val not in seen:
+                    if uuid_val and judul_val and uuid_val not in seen and uuid_val not in _DUMMY_UUIDS:
                         seen.add(uuid_val)
                         hasil.append({"uuid": uuid_val, "judul": judul_val})
                 if len(rows) < limit:
                     break
                 offset += limit
-            if hasil:
+            if len(hasil) >= 50:
                 break
         except Exception:
             continue
 
-    if len(hasil) > 10:
+    if len(hasil) >= 50:
         _simpan_cache_file(hasil)
         return hasil
 
@@ -296,18 +307,18 @@ def baca_katalog() -> list:
                     break
                 for row in rows:
                     nama = str(row.get("dataset_name") or "").strip()
-                    if nama and nama not in seen:
+                    if nama and nama not in seen and nama not in _DUMMY_UUIDS:
                         seen.add(nama)
                         hasil.append({"uuid": nama, "judul": nama})
                 if len(rows) < limit:
                     break
                 offset += limit
-            if len(hasil) > 10:
+            if len(hasil) >= 50:
                 break
         except Exception:
             continue
 
-    if len(hasil) > 10:
+    if len(hasil) >= 50:
         hasil_urut = sorted(hasil, key=lambda x: x["judul"])
         _simpan_cache_file(hasil_urut)
         return hasil_urut
@@ -386,7 +397,7 @@ def cari_dataset(kata_kunci: str, limit: int = 100, page: int = 0) -> list:
 
     # 1. Coba cari melalui katalog lengkap yang sudah tersinkronisasi terlebih dahulu agar instan dan lengkap
     katalog_penuh = baca_katalog()
-    if len(katalog_penuh) <= 10:
+    if len(katalog_penuh) < 50:
         katalog_penuh = sinkronkan_katalog()
 
     if katalog_penuh:
@@ -590,7 +601,22 @@ DATA:
 
 
 # ============ FASTAPI ============
-app = FastAPI(title="API Narasi Laporan Statistik Aceh")
+def _auto_sync_katalog_latar_belakang() -> None:
+    try:
+        katalog_awal = baca_katalog()
+        if len(katalog_awal) < 50:
+            sinkronkan_katalog()
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    threading.Thread(target=_auto_sync_katalog_latar_belakang, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="API Narasi Laporan Statistik Aceh", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -651,7 +677,7 @@ def get_narasi(
 def get_dataset():
     try:
         katalog = baca_katalog()
-        if len(katalog) <= 10:
+        if len(katalog) < 50:
             katalog = sinkronkan_katalog()
         return katalog
     except Exception as exc:
