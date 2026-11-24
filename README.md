@@ -2,7 +2,7 @@
 
 # NARA-AI
 
-### Sistem Natural Language Generation Berbasis LLM untuk Narasi Laporan Statistik Satu Data Aceh
+### Pengembangan Sistem Natural Language Generation Berbasis Large Language Model dengan Pencegahan Halusinasi Data untuk Narasi Laporan Statistik Satu Data Aceh
 
 Platform web yang mengubah dataset resmi **Portal Satu Data Aceh** menjadi draf narasi laporan statistik formal secara otomatis, dengan mekanisme pencegahan halusinasi angka dan tabel verifikasi data sumber.
 
