@@ -447,6 +447,7 @@ def cari_dataset(kata_kunci: str, limit: int = 100, page: int = 0) -> list:
 
 def ambil_data_source(uuid: str, tahun: Optional[int] = None) -> list:
     """Mengambil baris data dari Satu Data Aceh API atau tabel master_data di Supabase."""
+    tahun_str = str(tahun).strip() if tahun is not None else None
     try:
         params = {"tahun": tahun} if tahun is not None else {}
         resp = requests.get(
@@ -456,9 +457,32 @@ def ambil_data_source(uuid: str, tahun: Optional[int] = None) -> list:
             timeout=15,
         )
         resp.raise_for_status()
-        rows = resp.json().get("data", {}).get("rows", [])
-        if rows:
-            return rows
+        rows_awal = resp.json().get("data", {}).get("rows", [])
+        if rows_awal:
+            if tahun_str is None:
+                return rows_awal
+            rows_cocok = [
+                r
+                for r in rows_awal
+                if r.get("tahun") is not None and str(r.get("tahun")).strip() == tahun_str
+            ]
+            if rows_cocok:
+                return rows_cocok
+        elif tahun_str is not None:
+            resp_semua = requests.get(
+                f"{BASE_URL}/datasets/datasource/{uuid}/",
+                headers=headers,
+                timeout=15,
+            )
+            resp_semua.raise_for_status()
+            rows_semua = resp_semua.json().get("data", {}).get("rows", [])
+            rows_cocok = [
+                r
+                for r in rows_semua
+                if r.get("tahun") is not None and str(r.get("tahun")).strip() == tahun_str
+            ]
+            if rows_cocok:
+                return rows_cocok
     except Exception:
         pass
 
@@ -636,23 +660,42 @@ app.add_middleware(
 def get_narasi(
     uuid: list[str] = Query(..., min_length=1),
     judul: list[str] = Query(default=[]),
+    tahun: list[str] = Query(default=[]),
 ):
-    """Menyusun narasi dari satu atau beberapa UUID dataset tanpa membatasi tahun."""
+    """Menyusun narasi dari satu atau beberapa UUID dataset dengan filter tahun opsional per dataset."""
     dataset_data = []
     dataset_tidak_ada = []
+    seen_uuid: set[str] = set()
 
-    judul_per_uuid = dict(zip(uuid, judul))
-    for dataset_uuid in dict.fromkeys(uuid):
-        baris_data = ambil_data_source(dataset_uuid)
+    for idx, dataset_uuid in enumerate(uuid):
+        if dataset_uuid in seen_uuid:
+            continue
+        seen_uuid.add(dataset_uuid)
+
+        judul_dasar = judul[idx] if idx < len(judul) and judul[idx] else f"Dataset {dataset_uuid}"
+        tahun_mentah = tahun[idx].strip() if idx < len(tahun) and tahun[idx] is not None else ""
+        if tahun_mentah and tahun_mentah.lower() not in ("all", "semua") and tahun_mentah.isdigit():
+            tahun_filter: Optional[int] = int(tahun_mentah)
+        else:
+            tahun_filter = None
+
+        baris_data = ambil_data_source(dataset_uuid, tahun=tahun_filter)
         data_bersih = [ekstrak_nilai_indikator(baris) for baris in baris_data]
 
         if not data_bersih:
             dataset_tidak_ada.append(dataset_uuid)
             continue
 
+        judul_efektif = (
+            f"{judul_dasar} (Tahun {tahun_filter})"
+            if tahun_filter is not None and f"Tahun {tahun_filter}" not in judul_dasar
+            else judul_dasar
+        )
+
         dataset_data.append({
             "uuid": dataset_uuid,
-            "judul": judul_per_uuid.get(dataset_uuid) or f"Dataset {dataset_uuid}",
+            "judul": judul_efektif,
+            "tahun_filter": tahun_filter,
             "data": data_bersih[:40],
         })
 
@@ -709,17 +752,77 @@ def get_cari_dataset(kata_kunci: str = "", limit: int = 100):
     return cari_dataset(kata_kunci, limit)
 
 
+def _adalah_nilai_numerik(nilai) -> bool:
+    if isinstance(nilai, bool):
+        return False
+    if isinstance(nilai, (int, float)):
+        return True
+    if isinstance(nilai, str):
+        teks = nilai.strip().replace(",", ".")
+        if not teks:
+            return False
+        try:
+            float(teks)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
 @app.get("/tahun-dataset")
 def get_tahun_dataset(uuid: str):
-    """Mengembalikan hanya tahun yang benar-benar tersedia pada suatu dataset."""
+    """Mengembalikan tahun tersedia beserta ringkasan indikator, cakupan wilayah, dan sampel data."""
     baris_data = ambil_data_source(uuid)
+    if not baris_data:
+        return {
+            "uuid": uuid,
+            "tahun": [],
+            "jumlah_baris": 0,
+            "indikator": [],
+            "cakupan_wilayah": [],
+            "sampel_data": [],
+        }
+
+    data_bersih = [ekstrak_nilai_indikator(baris) for baris in baris_data]
     tahun_tersedia = sorted(
-        {int(baris["tahun"]) for baris in baris_data if baris.get("tahun") is not None and str(baris["tahun"]).isdigit()},
+        {
+            int(str(baris["tahun"]).strip())
+            for baris in data_bersih
+            if baris.get("tahun") is not None and str(baris["tahun"]).strip().isdigit()
+        },
         reverse=True,
     )
-    if not tahun_tersedia:
-        raise HTTPException(status_code=404, detail="Tahun data tidak ditemukan untuk dataset ini")
-    return {"uuid": uuid, "tahun": tahun_tersedia}
+
+    indikator_numerik: list[str] = []
+    semua_kolom_non_meta: list[str] = []
+    cakupan_wilayah: list[str] = []
+    seen_wilayah: set[str] = set()
+
+    for baris in data_bersih:
+        wilayah_val = str(baris.get("wilayah") or "").strip()
+        if wilayah_val and wilayah_val not in seen_wilayah:
+            seen_wilayah.add(wilayah_val)
+            if len(cakupan_wilayah) < 6:
+                cakupan_wilayah.append(wilayah_val)
+
+        for kunci, nilai in baris.items():
+            if kunci in ("wilayah", "tahun"):
+                continue
+            if kunci not in semua_kolom_non_meta:
+                semua_kolom_non_meta.append(kunci)
+            if kunci not in indikator_numerik and _adalah_nilai_numerik(nilai):
+                indikator_numerik.append(kunci)
+
+    indikator = indikator_numerik if indikator_numerik else semua_kolom_non_meta
+
+    return {
+        "uuid": uuid,
+        "tahun": tahun_tersedia,
+        "jumlah_baris": len(data_bersih),
+        "indikator": indikator,
+        "cakupan_wilayah": cakupan_wilayah,
+        "sampel_data": data_bersih[:5],
+    }
 
 
 if __name__ == "__main__":

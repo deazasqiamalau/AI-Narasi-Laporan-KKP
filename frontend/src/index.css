@@ -4,7 +4,16 @@
 
 :root {
   color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: 'Lora', Georgia, Cambria, "Times New Roman", Times, serif;
+  }
 }
 
 html {
@@ -14,9 +23,22 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #F8FAFC;
+  background-color: #FDFBFB;
   color: #0F172A;
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+code {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 button,
@@ -38,10 +60,108 @@ input:focus-visible {
   min-height: 100vh;
 }
 
+.font-editorial {
+  font-family: 'Lora', Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.font-ui {
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.font-mono-num {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Architectural Crimson-Slate Grid Pattern */
+.bg-nara-pattern {
+  background-color: #FDFBFB;
+  background-image:
+    radial-gradient(circle, rgba(220, 38, 38, 0.16) 1.35px, transparent 1.35px),
+    linear-gradient(to right, rgba(153, 27, 27, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(153, 27, 27, 0.055) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: 0 0, 15.5px 0, 0 15.5px;
+}
+
+/* Ambient Red Light Orbs */
+@keyframes driftGlow {
+  0%, 100% {
+    transform: translate3d(0px, 0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate3d(24px, -18px, 0px) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-18px, 20px, 0px) scale(0.96);
+  }
+}
+
+.red-light-glow {
+  background: radial-gradient(
+    circle,
+    rgba(220, 38, 38, 0.14) 0%,
+    rgba(153, 27, 27, 0.10) 42%,
+    transparent 72%
+  );
+  filter: blur(90px);
+  pointer-events: none;
+  animation: driftGlow 14s ease-in-out infinite;
+}
+
+.red-light-glow-alt {
+  background: radial-gradient(
+    circle,
+    rgba(142, 17, 24, 0.13) 0%,
+    rgba(220, 38, 38, 0.10) 45%,
+    transparent 74%
+  );
+  filter: blur(90px);
+  pointer-events: none;
+  animation: driftGlow 16s ease-in-out infinite reverse;
+}
+
+/* Crimson-Tinted Shadows */
+.card-crimson-shadow {
+  box-shadow:
+    0 12px 32px -12px rgba(153, 27, 27, 0.12),
+    0 4px 12px -4px rgba(15, 23, 42, 0.05);
+}
+
+.card-crimson-interactive {
+  box-shadow:
+    0 12px 32px -12px rgba(153, 27, 27, 0.12),
+    0 4px 12px -4px rgba(15, 23, 42, 0.05);
+  transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 300ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 300ms ease;
+}
+
+.card-crimson-interactive:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -14px rgba(185, 28, 28, 0.20);
+}
+
 @keyframes page-fade-in {
   from {
     opacity: 0;
     transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -65,7 +185,7 @@ input:focus-visible {
     transform: translateY(0px);
   }
   50% {
-    transform: translateY(-5px);
+    transform: translateY(-6px);
   }
 }
 
@@ -78,8 +198,30 @@ input:focus-visible {
   }
 }
 
+@keyframes shimmer-sweep {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  65%, 100% {
+    transform: translateX(220%) skewX(-18deg);
+  }
+}
+
+@keyframes caret-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
 .animate-page {
   animation: page-fade-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.animate-fade-slide-up {
+  animation: fade-slide-up 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .animate-modal {
@@ -87,11 +229,41 @@ input:focus-visible {
 }
 
 .animate-float {
-  animation: float-badge 3.8s ease-in-out infinite;
+  animation: float-badge 4.6s ease-in-out infinite;
 }
 
 .animate-spin-slow {
   animation: spin-slow 16s linear infinite;
+}
+
+.animate-caret {
+  animation: caret-blink 0.9s step-end infinite;
+}
+
+.btn-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.26),
+    transparent
+  );
+  transform: translateX(-120%) skewX(-18deg);
+  animation: shimmer-sweep 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.btn-shimmer:disabled::after {
+  animation: none;
+  opacity: 0;
 }
 
 .custom-scrollbar::-webkit-scrollbar {

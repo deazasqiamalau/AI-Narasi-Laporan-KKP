@@ -51,6 +51,7 @@ export function Icon({ name, className = 'h-5 w-5' }) {
     copy: <><rect x="9" y="9" width="11" height="11" rx="2" strokeWidth="1.6" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" strokeLinecap="round" strokeWidth="1.6" /></>,
     download: <path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" />,
     table: <><rect x="3" y="4" width="18" height="16" rx="2" strokeWidth="1.6" /><path d="M3 10h18M9 10v10" strokeWidth="1.6" /></>,
+    split: <><rect x="3" y="4" width="18" height="16" rx="2" strokeWidth="1.6" /><path d="M12 4v16" strokeWidth="1.6" /></>,
     refresh: <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8m0 0V3m0 5h5m-5 4a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16m0 0v5m0-5h-5" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" />,
     search: <><circle cx="11" cy="11" r="7" strokeWidth="1.6" /><path d="m20 20-3.5-3.5" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" /></>,
     trash: <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" />,
@@ -91,6 +92,29 @@ const OPSI_GAYA_PENYAJIAN = [
   },
 ]
 
+function urutkanKolomTabel(barisList) {
+  if (!Array.isArray(barisList) || !barisList.length) return []
+  const semuaKunci = []
+  barisList.forEach((row) => {
+    Object.keys(row || {}).forEach((key) => {
+      if (!semuaKunci.includes(key)) semuaKunci.push(key)
+    })
+  })
+  const prioritas = ['wilayah', 'tahun']
+  return [
+    ...prioritas.filter((k) => semuaKunci.includes(k)),
+    ...semuaKunci.filter((k) => !prioritas.includes(k)),
+  ]
+}
+
+function hitungRentangTahun(tahunList) {
+  if (!Array.isArray(tahunList) || !tahunList.length) return '-'
+  const sortedAsc = [...tahunList].sort((a, b) => a - b)
+  return sortedAsc.length > 1
+    ? `${sortedAsc[0]} - ${sortedAsc[sortedAsc.length - 1]}`
+    : `${sortedAsc[0]}`
+}
+
 export default function NarasiLaporanView({
   opsiDataset: propOpsiDataset,
   setOpsiDataset: propSetOpsiDataset,
@@ -115,24 +139,29 @@ export default function NarasiLaporanView({
   const [sedangCariServer, setSedangCariServer] = useState(false)
   const [datasetTerpilih, setDatasetTerpilih] = useState([])
   const [gayaNarasi, setGayaNarasi] = useState('resmi')
-  const [tahunPerDataset, setTahunPerDataset] = useState({})
-  const [daftarTahunLengkap, setDaftarTahunLengkap] = useState({})
+  const [detailDatasetMap, setDetailDatasetMap] = useState({})
   const [loading, setLoading] = useState(false)
   const [tahapLoading, setTahapLoading] = useState(0)
   const [hasil, setHasil] = useState(null)
   const [waktuPembuatan, setWaktuPembuatan] = useState('')
   const [error, setError] = useState('')
-  const [tabHasil, setTabHasil] = useState('narasi') // 'narasi' | 'tabel' | 'riwayat'
+  const [tabHasil, setTabHasil] = useState('narasi') // 'narasi' | 'tabel' | 'split' | 'riwayat'
   const [ukuranHuruf, setUkuranHuruf] = useState('normal') // 'normal' | 'besar'
   const [tabDatasetMentah, setTabDatasetMentah] = useState(0)
   const [filterBarisTabel, setFilterBarisTabel] = useState('')
   const [riwayatSesi, setRiwayatSesi] = useState([])
   const [statusSalin, setStatusSalin] = useState(false)
 
-  // State Pop-up Modal Pratinjau Metadata/Tahun Dataset
+  // State animasi typewriter / streaming reveal pada hasil narasi
+  const [panjangStream, setPanjangStream] = useState(0)
+  const [sedangMengetik, setSedangMengetik] = useState(false)
+  const [streamState, setStreamState] = useState({ token: 0, active: false })
+
+  // State Pop-up Modal Pratinjau Metadata & Sampel Data Dataset
   const [modalDatasetDetail, setModalDatasetDetail] = useState(null)
-  const [loadingModalTahun, setLoadingModalTahun] = useState(false)
-  const [errorModalTahun, setErrorModalTahun] = useState('')
+  const [tahunPilihanModal, setTahunPilihanModal] = useState('all')
+  const [loadingModalDetail, setLoadingModalDetail] = useState(false)
+  const [errorModalDetail, setErrorModalDetail] = useState('')
 
   const hasilSectionRef = useRef(null)
 
@@ -236,61 +265,83 @@ export default function NarasiLaporanView({
     }
   }, [loading])
 
-  const muatTahunDataset = async (uuid) => {
+  const muatDetailDataset = async (uuid) => {
     if (!uuid) return null
-    if (daftarTahunLengkap[uuid]) return daftarTahunLengkap[uuid]
+    if (detailDatasetMap[uuid]) return detailDatasetMap[uuid]
     try {
       const res = await fetchJson(`/tahun-dataset?uuid=${encodeURIComponent(uuid)}`)
-      if (Array.isArray(res.tahun) && res.tahun.length) {
-        const sortedAsc = [...res.tahun].sort((a, b) => a - b)
-        const sortedDesc = [...res.tahun].sort((a, b) => b - a)
-        const label =
-          sortedAsc.length > 1
-            ? `${sortedAsc[0]} - ${sortedAsc[sortedAsc.length - 1]}`
-            : `${sortedAsc[0]}`
-        setTahunPerDataset((prev) => ({ ...prev, [uuid]: label }))
-        setDaftarTahunLengkap((prev) => ({ ...prev, [uuid]: sortedDesc }))
-        return sortedDesc
+      const tahunList = Array.isArray(res.tahun)
+        ? [...res.tahun].map((t) => Number(t)).filter((t) => !Number.isNaN(t)).sort((a, b) => b - a)
+        : []
+      const info = {
+        uuid,
+        tahun: tahunList,
+        rentangTahun: hitungRentangTahun(tahunList),
+        jumlah_baris: typeof res.jumlah_baris === 'number' ? res.jumlah_baris : 0,
+        indikator: Array.isArray(res.indikator) ? res.indikator : [],
+        cakupan_wilayah: Array.isArray(res.cakupan_wilayah) ? res.cakupan_wilayah : [],
+        sampel_data: Array.isArray(res.sampel_data) ? res.sampel_data : [],
       }
+      setDetailDatasetMap((prev) => ({ ...prev, [uuid]: info }))
+      return info
     } catch {
-      // Abaikan jika tahun belum tersedia untuk dataset tertentu
+      return null
     }
-    return null
   }
 
   const bukaModalDetailDataset = async (dataset) => {
+    const sudahAda = datasetTerpilih.find((item) => item.uuid === dataset.uuid)
     setModalDatasetDetail(dataset)
-    setErrorModalTahun('')
-    if (daftarTahunLengkap[dataset.uuid]) return
+    setTahunPilihanModal(sudahAda?.tahunPilihan || 'all')
+    setErrorModalDetail('')
 
-    setLoadingModalTahun(true)
+    if (detailDatasetMap[dataset.uuid]) return
+
+    setLoadingModalDetail(true)
     try {
       const res = await fetchJson(`/tahun-dataset?uuid=${encodeURIComponent(dataset.uuid)}`)
-      if (Array.isArray(res.tahun) && res.tahun.length) {
-        const sortedAsc = [...res.tahun].sort((a, b) => a - b)
-        const sortedDesc = [...res.tahun].sort((a, b) => b - a)
-        const label =
-          sortedAsc.length > 1
-            ? `${sortedAsc[0]} - ${sortedAsc[sortedAsc.length - 1]}`
-            : `${sortedAsc[0]}`
-        setTahunPerDataset((prev) => ({ ...prev, [dataset.uuid]: label }))
-        setDaftarTahunLengkap((prev) => ({ ...prev, [dataset.uuid]: sortedDesc }))
-      } else {
-        setErrorModalTahun('Data tahun belum tersedia untuk dataset ini.')
+      const tahunList = Array.isArray(res.tahun)
+        ? [...res.tahun].map((t) => Number(t)).filter((t) => !Number.isNaN(t)).sort((a, b) => b - a)
+        : []
+      const info = {
+        uuid: dataset.uuid,
+        tahun: tahunList,
+        rentangTahun: hitungRentangTahun(tahunList),
+        jumlah_baris: typeof res.jumlah_baris === 'number' ? res.jumlah_baris : 0,
+        indikator: Array.isArray(res.indikator) ? res.indikator : [],
+        cakupan_wilayah: Array.isArray(res.cakupan_wilayah) ? res.cakupan_wilayah : [],
+        sampel_data: Array.isArray(res.sampel_data) ? res.sampel_data : [],
       }
+      setDetailDatasetMap((prev) => ({ ...prev, [dataset.uuid]: info }))
     } catch (err) {
-      setErrorModalTahun(err.message || 'Tahun data tidak ditemukan untuk dataset ini.')
+      setErrorModalDetail(err.message || 'Gagal memuat detail metadata dataset.')
     } finally {
-      setLoadingModalTahun(false)
+      setLoadingModalDetail(false)
     }
   }
 
-  const tambahDataset = (dataset) => {
+  const ubahTahunDataset = (uuid, tahunBaru) => {
+    setDatasetTerpilih((previous) =>
+      previous.map((item) => (item.uuid === uuid ? { ...item, tahunPilihan: tahunBaru } : item))
+    )
+  }
+
+  const tambahDataset = (dataset, tahunAwal = 'all') => {
+    const tahunNorm = tahunAwal || 'all'
     if (!datasetTerpilih.some((item) => item.uuid === dataset.uuid)) {
-      setDatasetTerpilih((previous) => [...previous, dataset])
-      muatTahunDataset(dataset.uuid)
+      setDatasetTerpilih((previous) => [
+        ...previous,
+        { uuid: dataset.uuid, judul: dataset.judul, tahunPilihan: tahunNorm },
+      ])
+      muatDetailDataset(dataset.uuid)
       if (onShowToast) {
-        onShowToast(`Dataset ditambahkan (${datasetTerpilih.length + 1} terpilih).`)
+        const labelTahun = tahunNorm === 'all' ? 'Semua Tahun' : `Tahun ${tahunNorm}`
+        onShowToast(`Dataset ditambahkan (${labelTahun}, ${datasetTerpilih.length + 1} terpilih).`)
+      }
+    } else if (tahunNorm !== 'all') {
+      ubahTahunDataset(dataset.uuid, tahunNorm)
+      if (onShowToast) {
+        onShowToast(`Filter dataset diperbarui menjadi Tahun ${tahunNorm}.`)
       }
     }
     setError('')
@@ -371,12 +422,54 @@ export default function NarasiLaporanView({
     return teksAsli
   }
 
+  const teksNarasiTampil = hasil?.narasi
+    ? formatNarasiBerdasarkanGaya(hasil.narasi, hasil.gayaId || gayaNarasi)
+    : ''
+
+  // Efek streaming / typewriter saat draf narasi baru selesai di-generate
+  useEffect(() => {
+    if (!streamState.active || !teksNarasiTampil) {
+      setPanjangStream(teksNarasiTampil.length)
+      setSedangMengetik(false)
+      return
+    }
+
+    setPanjangStream(0)
+    setSedangMengetik(true)
+    const total = teksNarasiTampil.length
+    const step = Math.max(4, Math.ceil(total / 160))
+
+    const timer = window.setInterval(() => {
+      setPanjangStream((prev) => {
+        const next = prev + step
+        if (next >= total) {
+          window.clearInterval(timer)
+          setSedangMengetik(false)
+          setStreamState((s) => ({ ...s, active: false }))
+          return total
+        }
+        return next
+      })
+    }, 16)
+
+    return () => window.clearInterval(timer)
+  }, [streamState.token, streamState.active, teksNarasiTampil])
+
+  const tampilkanSekaligus = () => {
+    setStreamState((prev) => ({ ...prev, active: false }))
+    setPanjangStream(teksNarasiTampil.length)
+    setSedangMengetik(false)
+  }
+
+  const teksDitampilkan = sedangMengetik ? teksNarasiTampil.slice(0, panjangStream) : teksNarasiTampil
+
   const buatLaporan = async () => {
     if (!datasetTerpilih.length || loading) return
 
     setLoading(true)
     setError('')
     setHasil(null)
+    setSedangMengetik(false)
     setTabHasil('narasi')
     setTabDatasetMentah(0)
     setFilterBarisTabel('')
@@ -390,6 +483,7 @@ export default function NarasiLaporanView({
       datasetTerpilih.forEach((dataset) => {
         params.append('uuid', dataset.uuid)
         params.append('judul', dataset.judul)
+        params.append('tahun', dataset.tahunPilihan || 'all')
       })
       const data = await fetchJson(`/narasi?${params.toString()}`)
 
@@ -416,6 +510,7 @@ export default function NarasiLaporanView({
         }
 
         setHasil(hasilLengkap)
+        setStreamState((prev) => ({ token: prev.token + 1, active: true }))
         setWaktuPembuatan(stempelWaktu)
         setRiwayatSesi((prev) => [
           {
@@ -445,10 +540,6 @@ export default function NarasiLaporanView({
       setLoading(false)
     }
   }
-
-  const teksNarasiTampil = hasil?.narasi
-    ? formatNarasiBerdasarkanGaya(hasil.narasi, hasil.gayaId || gayaNarasi)
-    : ''
 
   const salinNarasi = async () => {
     if (!hasil?.narasi) return
@@ -528,7 +619,7 @@ export default function NarasiLaporanView({
       .split(/\n\s*\n/)
       .map(
         (p) =>
-          `<p style="text-align:justify; line-height:1.75; margin-bottom:12pt; font-family:'Times New Roman',serif; font-size:12pt;">${p}</p>`
+          `<p style="text-align:justify; line-height:1.75; margin-bottom:12pt; font-family:'Lora','Times New Roman',serif; font-size:12pt;">${p}</p>`
       )
       .join('')
 
@@ -540,7 +631,7 @@ export default function NarasiLaporanView({
         <meta charset="utf-8" />
         <title>${hasil.judul}</title>
       </head>
-      <body style="font-family:'Times New Roman',serif; color:#0F172A; padding:24pt;">
+      <body style="font-family:'Lora','Times New Roman',serif; color:#0F172A; padding:24pt;">
         <div style="border-bottom:2px solid #991B1B; padding-bottom:10pt; margin-bottom:16pt;">
           <p style="margin:0; font-size:10pt; font-weight:bold; color:#991B1B; text-transform:uppercase;">
             UPTD Statistik • Dinas Komunikasi, Informatika dan Persandian Aceh
@@ -575,21 +666,7 @@ export default function NarasiLaporanView({
   const daftarDataMentah = Array.isArray(hasil?.data) ? hasil.data : []
   const datasetMentahAktif = daftarDataMentah[tabDatasetMentah] || daftarDataMentah[0] || null
   const barisMentahAktif = Array.isArray(datasetMentahAktif?.data) ? datasetMentahAktif.data : []
-
-  const kolomTabelMentah = (() => {
-    if (!barisMentahAktif.length) return []
-    const semuaKunci = []
-    barisMentahAktif.forEach((row) => {
-      Object.keys(row || {}).forEach((key) => {
-        if (!semuaKunci.includes(key)) semuaKunci.push(key)
-      })
-    })
-    const prioritas = ['wilayah', 'tahun']
-    return [
-      ...prioritas.filter((k) => semuaKunci.includes(k)),
-      ...semuaKunci.filter((k) => !prioritas.includes(k)),
-    ]
-  })()
+  const kolomTabelMentah = urutkanKolomTabel(barisMentahAktif)
 
   const barisMentahTersaring = (() => {
     const kueri = filterBarisTabel.trim().toLocaleLowerCase('id-ID')
@@ -611,45 +688,313 @@ export default function NarasiLaporanView({
 
   const jumlahDatasetDigabung = hasil?.dataset?.length || datasetTerpilih.length || 0
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-6 animate-page">
-      {/* Header Halaman Generator Narasi */}
-      <div className="rounded-2xl border border-slate-200/80 bg-[#FFFFFF] p-6 shadow-sm sm:p-7">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-[#DC2626]">
-              Ruang Kerja Dokumen Statistik
-            </p>
-            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
-              Generator Narasi Laporan Satu Data Aceh
-            </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Alur kerja terpusat untuk memilih dataset resmi, menentukan gaya laporan, dan memverifikasi tabel sumber.
-            </p>
+  const renderPanelNarasi = (compact = false) => (
+    <div className="space-y-4">
+      {/* Toolbar Dokumen */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-[#F8FAFC] px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-slate-500">Ukuran Teks:</span>
+          <div className="inline-flex rounded-lg border border-slate-200 bg-[#FFFFFF] p-0.5">
+            <button
+              type="button"
+              onClick={() => setUkuranHuruf('normal')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                ukuranHuruf === 'normal'
+                  ? 'bg-[#0F172A] text-white'
+                  : 'text-slate-600 hover:text-[#0F172A]'
+              }`}
+            >
+              Normal
+            </button>
+            <button
+              type="button"
+              onClick={() => setUkuranHuruf('besar')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                ukuranHuruf === 'besar'
+                  ? 'bg-[#0F172A] text-white'
+                  : 'text-slate-600 hover:text-[#0F172A]'
+              }`}
+            >
+              Besar
+            </button>
           </div>
-          <div className="shrink-0 rounded-xl border border-slate-200 bg-[#F8FAFC] px-4 py-2.5 text-left sm:text-right">
-            <p className="text-[11px] font-medium text-slate-500">Status Katalog</p>
-            <p className="text-sm font-bold text-[#991B1B]">
-              {memuatDataset
-                ? 'Memuat katalog...'
-                : `${opsiDataset.length.toLocaleString('id-ID')} dataset tersedia`}
-            </p>
+
+          {sedangMengetik && (
+            <button
+              type="button"
+              onClick={tampilkanSekaligus}
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-[#991B1B] transition hover:border-[#DC2626] hover:bg-[#DC2626] hover:text-white"
+            >
+              Tampilkan Sekaligus
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={salinNarasi}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+              statusSalin
+                ? 'border-emerald-600 bg-emerald-600 text-white'
+                : 'border-slate-200 bg-[#FFFFFF] text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]'
+            }`}
+          >
+            {statusSalin ? 'Tersalin ke Clipboard' : 'Salin Teks'}
+          </button>
+
+          <button
+            type="button"
+            onClick={unduhTxt}
+            className="rounded-lg border border-slate-200 bg-[#FFFFFF] px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]"
+          >
+            Unduh TXT
+          </button>
+
+          <button
+            type="button"
+            onClick={unduhDoc}
+            className="rounded-lg bg-[#DC2626] px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#991B1B]"
+          >
+            Unduh DOC
+          </button>
+        </div>
+      </div>
+
+      {/* Kertas Dokumen Resmi (Font Lora Editorial) */}
+      <div
+        className={`bg-white border border-slate-200 rounded-2xl card-crimson-shadow ${
+          compact ? 'p-6' : 'p-7 sm:p-8'
+        }`}
+      >
+        <div className="border-b border-slate-200 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold uppercase tracking-widest text-[#DC2626]">
+              UPTD Statistik • Diskominsa Aceh
+            </span>
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-0.5 font-mono-num text-[11px] font-semibold text-emerald-700">
+              Terverifikasi Fakta JSON
+            </span>
+          </div>
+          <h3 className={`mt-2.5 font-editorial font-bold text-[#0F172A] leading-snug ${compact ? 'text-lg' : 'text-xl'}`}>
+            {hasil.judul}
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Format Penyajian:{' '}
+            {hasil.gayaLabel ||
+              OPSI_GAYA_PENYAJIAN.find((g) => g.id === gayaNarasi)?.label ||
+              'Laporan Formal 2-4 Paragraf'}
+          </p>
+        </div>
+
+        <article
+          className={`mt-5 whitespace-pre-line font-editorial text-[#0F172A] text-justify ${
+            ukuranHuruf === 'besar' ? 'text-lg leading-9' : 'text-base leading-8'
+          }`}
+        >
+          {teksDitampilkan}
+          {sedangMengetik && (
+            <span
+              aria-hidden="true"
+              className="ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-[#DC2626] animate-caret"
+            />
+          )}
+        </article>
+
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 text-xs text-slate-500">
+          <span>Sumber Data: Portal Resmi Satu Data Aceh (0% Deviasi Angka)</span>
+          {!compact && (
+            <button
+              type="button"
+              onClick={() => setTabHasil('tabel')}
+              className="font-semibold text-[#DC2626] hover:underline"
+            >
+              Lihat Tabel Verifikasi Data Sumber
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderPanelTabel = (compact = false) => (
+    <div className="space-y-4">
+      <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-end">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+            Audit Presisi Numerik
+          </span>
+          <h3 className="mt-1 font-editorial text-base font-bold text-[#0F172A]">
+            Tabel Indikator Sumber Satu Data Aceh
+          </h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Seluruh angka di dalam narasi diambil langsung dari baris data mentah di bawah ini tanpa pembulatan.
+          </p>
+        </div>
+
+        <div className={`relative w-full ${compact ? 'sm:w-52' : 'sm:w-64'}`}>
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+            <Icon name="search" className="h-3.5 w-3.5" />
+          </span>
+          <input
+            type="search"
+            value={filterBarisTabel}
+            onChange={(e) => setFilterBarisTabel(e.target.value)}
+            placeholder="Cari wilayah, tahun, nilai..."
+            className="w-full rounded-xl border border-slate-200 bg-[#F8FAFC] py-1.5 pl-8 pr-3 text-xs text-[#0F172A] outline-none focus:border-[#DC2626] focus:bg-[#FFFFFF]"
+          />
+        </div>
+      </div>
+
+      {daftarDataMentah.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {daftarDataMentah.map((ds, idx) => (
+            <button
+              key={ds.uuid}
+              type="button"
+              onClick={() => {
+                setTabDatasetMentah(idx)
+                setFilterBarisTabel('')
+              }}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                tabDatasetMentah === idx
+                  ? 'border-[#DC2626] bg-[#DC2626] text-white'
+                  : 'border-slate-200 bg-[#F8FAFC] text-slate-600 hover:border-red-200 hover:text-[#DC2626]'
+              }`}
+            >
+              Dataset #{idx + 1}: {ds.judul.length > 40 ? `${ds.judul.slice(0, 40)}...` : ds.judul}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {datasetMentahAktif && (
+        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-[#F8FAFC] px-4 py-2.5 text-xs text-slate-600">
+          <span className="font-semibold text-[#0F172A] truncate pr-3">{datasetMentahAktif.judul}</span>
+          <span className="shrink-0 font-mono-num font-bold text-[#991B1B]">
+            {barisMentahTersaring.length} / {barisMentahAktif.length} baris
+          </span>
+        </div>
+      )}
+
+      <div
+        className={`custom-scrollbar overflow-auto rounded-xl border border-slate-200 ${
+          compact ? 'max-h-[540px]' : 'max-h-96'
+        }`}
+      >
+        <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+          <thead className="bg-[#F8FAFC] sticky top-0 z-10">
+            <tr>
+              <th className="px-4 py-3 font-semibold uppercase tracking-wider text-slate-500">No</th>
+              {kolomTabelMentah.map((kolom) => (
+                <th
+                  key={kolom}
+                  className="px-4 py-3 font-semibold uppercase tracking-wider text-slate-700"
+                >
+                  {kolom.replace(/_/g, ' ')}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-[#FFFFFF]">
+            {barisMentahTersaring.length > 0 ? (
+              barisMentahTersaring.map((baris, idx) => (
+                <tr key={idx} className="hover:bg-[#F8FAFC]">
+                  <td className="px-4 py-2.5 font-mono-num text-slate-400">{idx + 1}</td>
+                  {kolomTabelMentah.map((kolom) => {
+                    const nilai = baris[kolom]
+                    const isNumeric = typeof nilai === 'number'
+                    return (
+                      <td
+                        key={kolom}
+                        className={`px-4 py-2.5 ${
+                          isNumeric
+                            ? 'font-mono-num font-semibold text-[#991B1B]'
+                            : kolom === 'wilayah'
+                            ? 'font-medium text-[#0F172A]'
+                            : kolom === 'tahun'
+                            ? 'font-mono-num text-slate-600'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        {nilai !== undefined && nilai !== null ? String(nilai) : '-'}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td
+                  colSpan={kolomTabelMentah.length + 1}
+                  className="px-4 py-8 text-center text-xs text-slate-500"
+                >
+                  Tidak ada baris yang cocok dengan pencarian &ldquo;{filterBarisTabel}&rdquo;.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  const detailModalAktif = modalDatasetDetail ? detailDatasetMap[modalDatasetDetail.uuid] : null
+  const datasetDiDaftarModal = modalDatasetDetail
+    ? datasetTerpilih.find((d) => d.uuid === modalDatasetDetail.uuid)
+    : null
+  const kolomSampelModal = urutkanKolomTabel(detailModalAktif?.sampel_data || [])
+
+  return (
+    <div className="space-y-6 animate-page">
+      {/* Header Halaman Generator Narasi dengan Ambient Red Light Orbs */}
+      <div className="relative mx-auto max-w-4xl">
+        <div
+          aria-hidden="true"
+          className="red-light-glow absolute -top-12 -right-12 -z-10 h-72 w-72 rounded-full"
+        />
+        <div
+          aria-hidden="true"
+          className="red-light-glow-alt absolute -bottom-10 -left-10 -z-10 h-64 w-64 rounded-full"
+        />
+
+        <div className="rounded-2xl border border-slate-200/80 border-t-2 border-t-[#DC2626] bg-[#FFFFFF] p-6 card-crimson-shadow sm:p-7">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#DC2626]">
+                Ruang Kerja Dokumen Statistik
+              </p>
+              <h1 className="mt-1.5 font-editorial text-2xl font-bold tracking-tight text-[#0F172A] sm:text-3xl">
+                Generator Narasi Laporan Satu Data Aceh
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Alur kerja terpusat untuk memilih dataset resmi, memfilter tahun target, dan memverifikasi tabel sumber.
+              </p>
+            </div>
+            <div className="shrink-0 rounded-xl border border-red-100 bg-red-50/50 px-4 py-2.5 text-left sm:text-right">
+              <p className="text-[11px] font-medium text-slate-500">Status Katalog</p>
+              <p className="font-mono-num text-sm font-bold text-[#991B1B]">
+                {memuatDataset
+                  ? 'Memuat katalog...'
+                  : `${opsiDataset.length.toLocaleString('id-ID')} dataset tersedia`}
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* TAHAP 1: PEMILIHAN DATASET (KARTU ATAS YANG RAPI & SEJAJAR) */}
-      <section className="rounded-2xl border border-slate-200/80 bg-[#FFFFFF] p-6 shadow-sm sm:p-7">
+      {/* TAHAP 1: PEMILIHAN DATASET */}
+      <section className="mx-auto max-w-4xl rounded-2xl border border-slate-200/80 bg-[#FFFFFF] p-6 card-crimson-shadow sm:p-7">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-lg font-bold text-[#0F172A]">1. Pilih Dataset Statistik</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Cari dan pilih satu atau beberapa dataset dari katalog resmi Satu Data Aceh
+              Cari, periksa detail sampel data, dan pilih satu atau beberapa dataset dari Satu Data Aceh
             </p>
           </div>
 
           <div className="flex items-center gap-2.5">
-            <span className="rounded-full border border-red-100 bg-red-50/70 px-3 py-1 text-xs font-semibold text-[#991B1B]">
+            <span className="rounded-full border border-red-100 bg-red-50/70 px-3 py-1 font-mono-num text-xs font-semibold text-[#991B1B]">
               {memuatDataset
                 ? 'Memuat...'
                 : filterDataset.trim()
@@ -736,6 +1081,7 @@ export default function NarasiLaporanView({
             <div className="custom-scrollbar max-h-72 divide-y divide-slate-100 overflow-y-auto">
               {opsiTersaring.map((dataset, idx) => {
                 const sudahDipilih = datasetTerpilih.some((item) => item.uuid === dataset.uuid)
+                const detailCache = detailDatasetMap[dataset.uuid]
                 return (
                   <div
                     key={dataset.uuid}
@@ -745,13 +1091,20 @@ export default function NarasiLaporanView({
                   >
                     <div className="min-w-0 flex-1 pr-2">
                       <p className="text-sm font-medium leading-relaxed text-[#0F172A]">
-                        <span className="mr-2 font-mono text-xs text-slate-400">{idx + 1}.</span>
+                        <span className="mr-2 font-mono-num text-xs text-slate-400">{idx + 1}.</span>
                         {dataset.judul}
                       </p>
-                      {tahunPerDataset[dataset.uuid] && (
-                        <span className="mt-1 inline-block rounded bg-red-50 px-2 py-0.5 text-[11px] font-medium text-[#991B1B]">
-                          Rentang Tahun: {tahunPerDataset[dataset.uuid]}
-                        </span>
+                      {detailCache && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          {detailCache.rentangTahun !== '-' && (
+                            <span className="inline-block rounded bg-red-50 px-2 py-0.5 font-mono-num text-[11px] font-medium text-[#991B1B]">
+                              Tahun: {detailCache.rentangTahun}
+                            </span>
+                          )}
+                          <span className="inline-block rounded bg-slate-100 px-2 py-0.5 font-mono-num text-[11px] font-medium text-slate-600">
+                            {detailCache.jumlah_baris.toLocaleString('id-ID')} baris
+                          </span>
+                        </div>
                       )}
                     </div>
 
@@ -796,15 +1149,15 @@ export default function NarasiLaporanView({
         </div>
       </section>
 
-      {/* TAHAP 2: DAFTAR DATASET TERPILIH & KONFIGURASI (KARTU TENGAH) */}
-      <section className="rounded-2xl border border-slate-200/80 bg-[#FFFFFF] p-6 shadow-sm sm:p-7 space-y-6">
+      {/* TAHAP 2: KARTU ITEM TERPILIH & KONFIGURASI LAPORAN */}
+      <section className="mx-auto max-w-4xl rounded-2xl border border-slate-200/80 bg-[#FFFFFF] p-6 card-crimson-shadow sm:p-7 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-lg font-bold text-[#0F172A]">
               2. Daftar Dataset Terpilih & Konfigurasi Laporan
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Tinjau dataset yang akan digabung dan pilih format gaya penyajian narasi
+              Atur filter tahun per dataset, lalu pilih gaya penyajian laporan sebelum menyusun narasi
             </p>
           </div>
           {datasetTerpilih.length > 0 && (
@@ -813,43 +1166,97 @@ export default function NarasiLaporanView({
               onClick={resetSemuaDataset}
               className="text-xs font-semibold text-slate-500 transition hover:text-[#DC2626]"
             >
-              Kosongkan Pilihan ({datasetTerpilih.length})
+              Kosongkan Pilihan (<span className="font-mono-num">{datasetTerpilih.length}</span>)
             </button>
           )}
         </div>
 
-        {/* Chips / Tags Dataset Terpilih */}
+        {/* Kartu Item Terpilih dengan Dropdown Tahun Per Dataset */}
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Dataset yang Dipilih ({datasetTerpilih.length})
+            Dataset yang Dipilih (<span className="font-mono-num">{datasetTerpilih.length}</span>)
           </label>
           {datasetTerpilih.length > 0 ? (
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              {datasetTerpilih.map((dataset) => (
-                <div
-                  key={dataset.uuid}
-                  className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50/60 px-3.5 py-2 text-xs font-medium text-[#0F172A]"
-                >
-                  <span className="max-w-xl truncate">{dataset.judul}</span>
-                  {tahunPerDataset[dataset.uuid] && (
-                    <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#991B1B]">
-                      {tahunPerDataset[dataset.uuid]}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => hapusDataset(dataset.uuid)}
-                    aria-label={`Hapus ${dataset.judul}`}
-                    className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-sm font-bold text-slate-500 transition hover:bg-red-100 hover:text-[#DC2626]"
+            <div className="mt-2.5 space-y-3">
+              {datasetTerpilih.map((dataset, idx) => {
+                const detailInfo = detailDatasetMap[dataset.uuid]
+                const daftarTahunItem = detailInfo?.tahun || []
+                const kosong = detailInfo && detailInfo.jumlah_baris === 0
+
+                return (
+                  <div
+                    key={dataset.uuid}
+                    className="flex flex-col justify-between gap-3 rounded-xl border border-red-200/80 bg-gradient-to-r from-red-50/40 via-white to-[#F8FAFC] p-4 shadow-sm transition hover:border-red-300 sm:flex-row sm:items-center"
                   >
-                    ×
-                  </button>
-                </div>
-              ))}
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#991B1B] font-mono-num text-[11px] font-bold text-white">
+                          {idx + 1}
+                        </span>
+                        <p className="text-sm font-semibold leading-snug text-[#0F172A]">{dataset.judul}</p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 pl-7">
+                        {detailInfo ? (
+                          kosong ? (
+                            <span className="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 font-mono-num text-[11px] font-semibold text-[#991B1B]">
+                              0 baris data (kosong di sumber)
+                            </span>
+                          ) : (
+                            <>
+                              <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-mono-num text-[11px] font-medium text-slate-700">
+                                {detailInfo.jumlah_baris.toLocaleString('id-ID')} baris
+                              </span>
+                              <span className="rounded-md border border-red-100 bg-red-50/70 px-2 py-0.5 font-mono-num text-[11px] font-medium text-[#991B1B]">
+                                {detailInfo.indikator.length} indikator
+                              </span>
+                            </>
+                          )
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Memuat info metadata dataset...</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0 pl-7 sm:pl-0">
+                      <select
+                        aria-label={`Pilih tahun untuk ${dataset.judul}`}
+                        value={dataset.tahunPilihan || 'all'}
+                        onChange={(e) => ubahTahunDataset(dataset.uuid, e.target.value)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono-num text-xs font-semibold text-[#0F172A] outline-none transition hover:border-red-300 focus:border-[#DC2626] focus:ring-2 focus:ring-red-100"
+                      >
+                        <option value="all">Semua Tahun</option>
+                        {daftarTahunItem.map((thn) => (
+                          <option key={thn} value={String(thn)}>
+                            Tahun {thn}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => bukaModalDetailDataset(dataset)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]"
+                      >
+                        Detail
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => hapusDataset(dataset.uuid)}
+                        aria-label={`Hapus ${dataset.judul}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <div className="mt-2.5 rounded-xl border border-dashed border-slate-200 bg-[#F8FAFC] px-4 py-4 text-xs text-slate-500">
-              Belum ada dataset dipilih. Silakan klik tombol <strong>+ Tambahkan</strong> pada katalog di atas.
+              Belum ada dataset dipilih. Silakan klik tombol <strong>+ Tambahkan</strong> atau <strong>Detail</strong> pada katalog di atas.
             </div>
           )}
         </div>
@@ -890,12 +1297,12 @@ export default function NarasiLaporanView({
           </div>
         </div>
 
-        {/* Tombol Aksi Utama Lebar Penuh Berwarna Merah */}
+        {/* Tombol Aksi Utama Lebar Penuh dengan Shimmer Crimson */}
         <button
           type="button"
           onClick={buatLaporan}
           disabled={!datasetTerpilih.length || loading}
-          className="w-full rounded-xl bg-red-600 py-3.5 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="btn-shimmer w-full rounded-xl bg-gradient-to-r from-[#8E1118] via-[#DC2626] to-[#991B1B] py-3.5 px-6 text-sm font-semibold text-white shadow-md shadow-red-600/20 transition hover:from-[#7F1D1D] hover:to-[#991B1B] disabled:cursor-not-allowed disabled:from-slate-300 disabled:via-slate-300 disabled:to-slate-300 disabled:shadow-none"
         >
           {loading
             ? 'Menyusun Draf Narasi Laporan...'
@@ -911,10 +1318,12 @@ export default function NarasiLaporanView({
         )}
       </section>
 
-      {/* TAHAP 3: HASIL NARASI & VERIFIKASI DATA SUMBER (KARTU BAWAH LEBAR PENUH) */}
+      {/* TAHAP 3: HASIL NARASI & VERIFIKASI DATA SUMBER */}
       <section
         ref={hasilSectionRef}
-        className="rounded-2xl border border-slate-200/80 bg-[#FFFFFF] shadow-sm overflow-hidden"
+        className={`mx-auto transition-all duration-300 rounded-2xl border border-slate-200/80 bg-[#FFFFFF] card-crimson-shadow overflow-hidden ${
+          tabHasil === 'split' ? 'max-w-6xl' : 'max-w-4xl'
+        }`}
       >
         <div className="border-b border-slate-100 bg-[#F8FAFC] px-6 py-4 sm:px-7">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -929,46 +1338,70 @@ export default function NarasiLaporanView({
               </p>
             </div>
 
-            {/* 3 Tab Bersih */}
+            {/* Tab Navigasi Hasil + Tombol Split View Desktop */}
             <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-[#FFFFFF] p-1">
-              {[
-                { id: 'narasi', label: 'Draf Narasi Laporan' },
-                { id: 'tabel', label: 'Verifikasi Data Sumber' },
-                {
-                  id: 'riwayat',
-                  label: riwayatSesi.length > 0 ? `Riwayat Sesi (${riwayatSesi.length})` : 'Riwayat Sesi',
-                },
-              ].map((tab) => {
-                const aktif = tabHasil === tab.id
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setTabHasil(tab.id)}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                      aktif
-                        ? 'bg-[#DC2626] text-white shadow-sm'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-[#0F172A]'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                )
-              })}
+              <button
+                type="button"
+                onClick={() => setTabHasil('narasi')}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  tabHasil === 'narasi'
+                    ? 'bg-[#DC2626] text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-[#0F172A]'
+                }`}
+              >
+                Draf Narasi Laporan
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTabHasil('tabel')}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  tabHasil === 'tabel'
+                    ? 'bg-[#DC2626] text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-[#0F172A]'
+                }`}
+              >
+                Verifikasi Data Sumber
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTabHasil('split')}
+                className={`hidden lg:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  tabHasil === 'split'
+                    ? 'bg-[#991B1B] text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-red-50/70 hover:text-[#991B1B]'
+                }`}
+              >
+                <Icon name="split" className="h-3.5 w-3.5" />
+                <span>Split View (Berdampingan)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTabHasil('riwayat')}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                  tabHasil === 'riwayat'
+                    ? 'bg-[#DC2626] text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-[#0F172A]'
+                }`}
+              >
+                {riwayatSesi.length > 0 ? `Riwayat Sesi (${riwayatSesi.length})` : 'Riwayat Sesi'}
+              </button>
             </div>
           </div>
         </div>
 
         <div className="p-6 sm:p-8">
           {loading ? (
-            <div className="py-10">
+            <div className="py-10 animate-fade-slide-up">
               <div className="mx-auto max-w-md text-center">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-red-200 border-t-[#DC2626]" />
-                <h3 className="mt-4 text-base font-bold text-[#0F172A]">
+                <h3 className="mt-4 font-editorial text-base font-bold text-[#0F172A]">
                   Menyusun Draf Narasi Laporan Resmi
                 </h3>
                 <p className="mt-1 text-xs text-slate-500">
-                  Memproses {datasetTerpilih.length} dataset dari portal Satu Data Aceh
+                  Memproses <span className="font-mono-num font-semibold">{datasetTerpilih.length}</span> dataset dari portal Satu Data Aceh
                 </p>
               </div>
 
@@ -994,8 +1427,8 @@ export default function NarasiLaporanView({
               </div>
             </div>
           ) : tabHasil === 'riwayat' ? (
-            /* TAB 3: RIWAYAT SESI */
-            <div className="space-y-4">
+            /* TAB RIWAYAT SESI */
+            <div className="space-y-4 animate-fade-slide-up">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-base font-bold text-[#0F172A]">Riwayat Narasi Sesi Ini</h3>
@@ -1026,11 +1459,11 @@ export default function NarasiLaporanView({
                     >
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                          <span className="rounded bg-red-50 px-2 py-0.5 font-semibold text-[#991B1B]">
+                          <span className="rounded bg-red-50 px-2 py-0.5 font-mono-num font-semibold text-[#991B1B]">
                             Laporan #{riwayatSesi.length - idx}
                           </span>
                           <span className="text-slate-500">{item.waktu}</span>
-                          <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">
+                          <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono-num font-medium text-slate-600">
                             {item.jumlahDataset} Dataset
                           </span>
                           <span className="rounded border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">
@@ -1043,9 +1476,18 @@ export default function NarasiLaporanView({
                       <button
                         type="button"
                         onClick={() => {
+                          const teksRiwayat = formatNarasiBerdasarkanGaya(
+                            item.payload?.narasi || '',
+                            item.gayaId || 'resmi'
+                          )
                           setHasil(item.payload)
                           setWaktuPembuatan(item.waktu)
                           setGayaNarasi(item.gayaId || 'resmi')
+                          setStreamState((prev) => ({ token: prev.token + 1, active: false }))
+                          setPanjangStream(teksRiwayat.length)
+                          setSedangMengetik(false)
+                          setTabDatasetMentah(0)
+                          setFilterBarisTabel('')
                           setTabHasil('narasi')
                         }}
                         className="shrink-0 rounded-lg bg-[#DC2626] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#991B1B]"
@@ -1065,250 +1507,52 @@ export default function NarasiLaporanView({
             <div className="rounded-2xl border border-dashed border-slate-200 bg-[#F8FAFC]/70 px-6 py-14 text-center">
               <p className="text-sm font-semibold text-[#0F172A]">Belum Ada Draf Laporan yang Disusun</p>
               <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">
-                Pilih dataset pada Tahap 1 dan klik tombol <strong>Generate Draf Narasi Laporan</strong> pada Tahap 2
-                untuk menampilkan hasil narasi beserta tabel verifikasi sumber di sini.
+                Pilih dataset pada Tahap 1, tentukan filter tahun pada Tahap 2, lalu klik tombol{' '}
+                <strong>Generate Draf Narasi Laporan</strong> untuk menampilkan hasilnya di sini.
               </p>
+            </div>
+          ) : tabHasil === 'split' ? (
+            /* MODE SPLIT VIEW BERDAMPINGAN (KIRI: NARASI LORA, KANAN: TABEL JSON) */
+            <div
+              key={`split-${hasil.waktuDibuat}`}
+              className="grid grid-cols-1 gap-6 lg:grid-cols-2 items-start animate-fade-slide-up"
+            >
+              <div>{renderPanelNarasi(true)}</div>
+              <div className="rounded-2xl border border-slate-200 bg-[#FFFFFF] p-5 card-crimson-shadow">
+                {renderPanelTabel(true)}
+              </div>
             </div>
           ) : tabHasil === 'narasi' ? (
             /* TAB 1: DRAF NARASI LAPORAN */
-            <div className="space-y-5">
-              {/* Toolbar Dokumen */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-[#F8FAFC] px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500">Ukuran Teks:</span>
-                  <div className="inline-flex rounded-lg border border-slate-200 bg-[#FFFFFF] p-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setUkuranHuruf('normal')}
-                      className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-                        ukuranHuruf === 'normal'
-                          ? 'bg-[#0F172A] text-white'
-                          : 'text-slate-600 hover:text-[#0F172A]'
-                      }`}
-                    >
-                      Normal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUkuranHuruf('besar')}
-                      className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-                        ukuranHuruf === 'besar'
-                          ? 'bg-[#0F172A] text-white'
-                          : 'text-slate-600 hover:text-[#0F172A]'
-                      }`}
-                    >
-                      Besar
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={salinNarasi}
-                    className={`rounded-lg border px-3.5 py-1.5 text-xs font-semibold transition ${
-                      statusSalin
-                        ? 'border-emerald-600 bg-emerald-600 text-white'
-                        : 'border-slate-200 bg-[#FFFFFF] text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]'
-                    }`}
-                  >
-                    {statusSalin ? 'Tersalin ke Clipboard' : 'Salin Teks'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={unduhTxt}
-                    className="rounded-lg border border-slate-200 bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-[#DC2626]"
-                  >
-                    Unduh TXT
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={unduhDoc}
-                    className="rounded-lg bg-[#DC2626] px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#991B1B]"
-                  >
-                    Unduh DOC
-                  </button>
-                </div>
-              </div>
-
-              {/* Kertas Dokumen Resmi */}
-              <div className="bg-white border border-slate-200 p-8 rounded-2xl shadow-sm">
-                <div className="border-b border-slate-200 pb-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-widest text-[#DC2626]">
-                      UPTD Statistik • Diskominsa Aceh
-                    </span>
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-0.5 text-[11px] font-semibold text-emerald-700">
-                      Terverifikasi Fakta JSON
-                    </span>
-                  </div>
-                  <h3 className="mt-2.5 text-xl font-bold text-[#0F172A] leading-snug">{hasil.judul}</h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Format Penyajian:{' '}
-                    {hasil.gayaLabel ||
-                      OPSI_GAYA_PENYAJIAN.find((g) => g.id === gayaNarasi)?.label ||
-                      'Laporan Formal 2-4 Paragraf'}
-                  </p>
-                </div>
-
-                <article
-                  className={`mt-6 whitespace-pre-line font-serif text-[#0F172A] text-justify ${
-                    ukuranHuruf === 'besar' ? 'text-lg leading-9' : 'text-base leading-8'
-                  }`}
-                >
-                  {teksNarasiTampil}
-                </article>
-
-                <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 text-xs text-slate-500">
-                  <span>Sumber Data: Portal Resmi Satu Data Aceh (0% Deviasi Angka)</span>
-                  <button
-                    type="button"
-                    onClick={() => setTabHasil('tabel')}
-                    className="font-semibold text-[#DC2626] hover:underline"
-                  >
-                    Lihat Tabel Verifikasi Data Sumber
-                  </button>
-                </div>
-              </div>
+            <div key={`narasi-${hasil.waktuDibuat}`} className="animate-fade-slide-up">
+              {renderPanelNarasi(false)}
             </div>
           ) : (
             /* TAB 2: VERIFIKASI DATA SUMBER */
-            <div className="space-y-4">
-              <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-end">
-                <div>
-                  <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-                    Audit Presisi Numerik
-                  </span>
-                  <h3 className="mt-1 text-base font-bold text-[#0F172A]">
-                    Tabel Indikator Sumber Satu Data Aceh
-                  </h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Seluruh angka di dalam narasi diambil langsung dari baris data mentah di bawah ini tanpa pembulatan.
-                  </p>
-                </div>
-
-                <div className="relative w-full sm:w-64">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Icon name="search" className="h-3.5 w-3.5" />
-                  </span>
-                  <input
-                    type="search"
-                    value={filterBarisTabel}
-                    onChange={(e) => setFilterBarisTabel(e.target.value)}
-                    placeholder="Cari wilayah, tahun, atau nilai..."
-                    className="w-full rounded-xl border border-slate-200 bg-[#F8FAFC] py-1.5 pl-8 pr-3 text-xs text-[#0F172A] outline-none focus:border-[#DC2626] focus:bg-[#FFFFFF]"
-                  />
-                </div>
-              </div>
-
-              {daftarDataMentah.length > 1 && (
-                <div className="flex flex-wrap gap-2">
-                  {daftarDataMentah.map((ds, idx) => (
-                    <button
-                      key={ds.uuid}
-                      type="button"
-                      onClick={() => {
-                        setTabDatasetMentah(idx)
-                        setFilterBarisTabel('')
-                      }}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                        tabDatasetMentah === idx
-                          ? 'border-[#DC2626] bg-[#DC2626] text-white'
-                          : 'border-slate-200 bg-[#F8FAFC] text-slate-600 hover:border-red-200 hover:text-[#DC2626]'
-                      }`}
-                    >
-                      Dataset #{idx + 1}: {ds.judul.length > 45 ? `${ds.judul.slice(0, 45)}...` : ds.judul}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {datasetMentahAktif && (
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-[#F8FAFC] px-4 py-2.5 text-xs text-slate-600">
-                  <span className="font-semibold text-[#0F172A] truncate pr-3">{datasetMentahAktif.judul}</span>
-                  <span className="shrink-0 font-bold text-[#991B1B]">
-                    {barisMentahTersaring.length} dari {barisMentahAktif.length} baris
-                  </span>
-                </div>
-              )}
-
-              <div className="custom-scrollbar max-h-96 overflow-auto rounded-xl border border-slate-200">
-                <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-                  <thead className="bg-[#F8FAFC] sticky top-0">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold uppercase tracking-wider text-slate-500">No</th>
-                      {kolomTabelMentah.map((kolom) => (
-                        <th
-                          key={kolom}
-                          className="px-4 py-3 font-semibold uppercase tracking-wider text-slate-700"
-                        >
-                          {kolom.replace(/_/g, ' ')}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-[#FFFFFF]">
-                    {barisMentahTersaring.length > 0 ? (
-                      barisMentahTersaring.map((baris, idx) => (
-                        <tr key={idx} className="hover:bg-[#F8FAFC]">
-                          <td className="px-4 py-2.5 font-mono text-slate-400">{idx + 1}</td>
-                          {kolomTabelMentah.map((kolom) => {
-                            const nilai = baris[kolom]
-                            const isNumeric = typeof nilai === 'number'
-                            return (
-                              <td
-                                key={kolom}
-                                className={`px-4 py-2.5 ${
-                                  isNumeric
-                                    ? 'font-mono font-semibold text-[#991B1B]'
-                                    : kolom === 'wilayah'
-                                    ? 'font-medium text-[#0F172A]'
-                                    : 'text-slate-600'
-                                }`}
-                              >
-                                {nilai !== undefined && nilai !== null ? String(nilai) : '-'}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td
-                          colSpan={kolomTabelMentah.length + 1}
-                          className="px-4 py-8 text-center text-xs text-slate-500"
-                        >
-                          Tidak ada baris yang cocok dengan pencarian &ldquo;{filterBarisTabel}&rdquo;.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+            <div key={`tabel-${hasil.waktuDibuat}`} className="animate-fade-slide-up">
+              {renderPanelTabel(false)}
             </div>
           )}
         </div>
       </section>
 
-      {/* POP-UP MODAL DETAIL TAHUN & METADATA DATASET */}
+      {/* POP-UP MODAL DETAIL METADATA, PEMILIH TAHUN & SAMPEL DATA DATASET */}
       {modalDatasetDetail && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm"
           onClick={() => setModalDatasetDetail(null)}
         >
           <div
-            className="animate-modal w-full max-w-lg rounded-2xl border border-slate-200 bg-[#FFFFFF] p-6 shadow-2xl"
+            className="animate-fade-slide-up custom-scrollbar max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-[#FFFFFF] p-6 card-crimson-shadow"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-[#DC2626]">
-                  Pratinjau Metadata Dataset
+                  Pratinjau Metadata & Sampel Data
                 </p>
-                <h3 className="mt-1 text-base font-bold text-[#0F172A]">
-                  Informasi Dataset & Ketersediaan Tahun
+                <h3 className="mt-1 font-editorial text-lg font-bold text-[#0F172A]">
+                  Detail Dataset Satu Data Aceh
                 </h3>
               </div>
               <button
@@ -1322,6 +1566,7 @@ export default function NarasiLaporanView({
             </div>
 
             <div className="mt-4 space-y-4">
+              {/* Judul Lengkap & UUID */}
               <div className="rounded-xl border border-slate-200 bg-[#F8FAFC] p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                   Judul Lengkap Dataset
@@ -1329,40 +1574,185 @@ export default function NarasiLaporanView({
                 <p className="mt-1 text-sm font-semibold text-[#0F172A] leading-relaxed">
                   {modalDatasetDetail.judul}
                 </p>
-                <p className="mt-2 font-mono text-xs text-slate-500">UUID: {modalDatasetDetail.uuid}</p>
+                <p className="mt-2 font-mono-num text-xs text-slate-500">UUID: {modalDatasetDetail.uuid}</p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-bold text-[#0F172A]">
-                    Daftar Tahun Data Tersedia (<code className="text-[#DC2626]">GET /tahun-dataset</code>)
-                  </p>
-                  {tahunPerDataset[modalDatasetDetail.uuid] && (
-                    <span className="rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-[#991B1B]">
-                      Rentang: {tahunPerDataset[modalDatasetDetail.uuid]}
-                    </span>
-                  )}
-                </div>
-
-                {loadingModalTahun ? (
-                  <p className="mt-3 text-xs text-slate-500">Memeriksa ketersediaan tahun dari server...</p>
-                ) : daftarTahunLengkap[modalDatasetDetail.uuid]?.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {daftarTahunLengkap[modalDatasetDetail.uuid].map((thn) => (
-                      <span
-                        key={thn}
-                        className="rounded-lg border border-red-200 bg-red-50/70 px-3 py-1 font-mono text-xs font-semibold text-[#991B1B]"
-                      >
-                        {thn}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
+              {loadingModalDetail ? (
+                <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-8 text-center">
+                  <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-red-200 border-t-[#DC2626]" />
                   <p className="mt-3 text-xs text-slate-500">
-                    {errorModalTahun || 'Memuat rincian tahun dataset...'}
+                    Memeriksa rincian tahun, indikator, dan sampel data dari server...
                   </p>
-                )}
-              </div>
+                </div>
+              ) : errorModalDetail ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-[#991B1B]">
+                  {errorModalDetail}
+                </div>
+              ) : detailModalAktif ? (
+                <>
+                  {/* 1. Ringkasan 3 Kotak Metrik Kecil */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-3.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Total Baris Data
+                      </p>
+                      <p className="mt-1 font-mono-num text-lg font-bold text-[#991B1B]">
+                        {detailModalAktif.jumlah_baris.toLocaleString('id-ID')}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-3.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Rentang Tahun
+                      </p>
+                      <p className="mt-1 font-mono-num text-lg font-bold text-[#0F172A]">
+                        {detailModalAktif.rentangTahun}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-3.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Jumlah Indikator
+                      </p>
+                      <p className="mt-1 font-mono-num text-lg font-bold text-[#0F172A]">
+                        {detailModalAktif.indikator.length}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 2. Daftar Indikator Statistik Terdeteksi */}
+                  <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-4 space-y-2.5">
+                    <p className="text-xs font-bold text-[#0F172A]">
+                      Indikator Statistik Terdeteksi
+                    </p>
+                    {detailModalAktif.indikator.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailModalAktif.indikator.map((ind) => (
+                          <span
+                            key={ind}
+                            className="rounded-md border border-red-200/80 bg-red-50/70 px-2.5 py-1 font-mono-num text-[11px] font-semibold text-[#991B1B]"
+                          >
+                            {ind}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">Belum ada indikator numerik terdeteksi.</p>
+                    )}
+
+                    {detailModalAktif.cakupan_wilayah.length > 0 && (
+                      <div className="border-t border-slate-100 pt-2.5">
+                        <p className="text-[11px] font-semibold text-slate-500">
+                          Contoh Cakupan Wilayah:{' '}
+                          <span className="font-medium text-slate-700">
+                            {detailModalAktif.cakupan_wilayah.join(', ')}
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3. Pemilih Tahun Interaktif */}
+                  <div className="rounded-xl border border-slate-200 bg-[#FFFFFF] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-bold text-[#0F172A]">
+                        Pemilih Tahun Target (<code className="font-mono-num text-[#DC2626]">GET /tahun-dataset</code>)
+                      </p>
+                      <span className="font-mono-num text-[11px] font-semibold text-[#991B1B]">
+                        Terpilih: {tahunPilihanModal === 'all' ? 'Semua Tahun' : `Tahun ${tahunPilihanModal}`}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTahunPilihanModal('all')}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                          tahunPilihanModal === 'all'
+                            ? 'border-[#DC2626] bg-[#DC2626] text-white shadow-sm'
+                            : 'border-slate-200 bg-[#F8FAFC] text-slate-700 hover:border-red-200 hover:text-[#DC2626]'
+                        }`}
+                      >
+                        Semua Tahun
+                      </button>
+
+                      {detailModalAktif.tahun.map((thn) => {
+                        const thnStr = String(thn)
+                        const aktif = tahunPilihanModal === thnStr
+                        return (
+                          <button
+                            key={thn}
+                            type="button"
+                            onClick={() => setTahunPilihanModal(thnStr)}
+                            className={`rounded-lg border px-3 py-1.5 font-mono-num text-xs font-semibold transition ${
+                              aktif
+                                ? 'border-[#DC2626] bg-[#DC2626] text-white shadow-sm'
+                                : 'border-red-200/70 bg-red-50/60 text-[#991B1B] hover:border-[#DC2626] hover:bg-red-100'
+                            }`}
+                          >
+                            {thn}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 4. Pratinjau 5 Baris Data Sampel */}
+                  {detailModalAktif.jumlah_baris === 0 ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50/80 p-4 text-xs leading-relaxed text-[#991B1B]">
+                      <strong>Dataset ini kosong (0 baris data).</strong> Portal Satu Data Aceh saat ini belum
+                      memiliki baris nilai indikator untuk UUID ini. Bila tetap dipilih bersama dataset lain,
+                      sistem otomatis melewatinya untuk mencegah halusinasi data.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-[#0F172A]">
+                        Pratinjau Sampel Data ({detailModalAktif.sampel_data.length} Baris Pertama)
+                      </p>
+                      <div className="custom-scrollbar overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                          <thead className="bg-[#F8FAFC]">
+                            <tr>
+                              {kolomSampelModal.map((kolom) => (
+                                <th
+                                  key={kolom}
+                                  className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-600 whitespace-nowrap"
+                                >
+                                  {kolom.replace(/_/g, ' ')}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-[#FFFFFF]">
+                            {detailModalAktif.sampel_data.map((baris, idx) => (
+                              <tr key={idx} className="hover:bg-[#F8FAFC]">
+                                {kolomSampelModal.map((kolom) => {
+                                  const nilai = baris[kolom]
+                                  const isNumeric = typeof nilai === 'number'
+                                  return (
+                                    <td
+                                      key={kolom}
+                                      className={`px-3 py-2 ${
+                                        isNumeric
+                                          ? 'font-mono-num font-semibold text-[#991B1B]'
+                                          : kolom === 'tahun'
+                                          ? 'font-mono-num text-slate-600'
+                                          : kolom === 'wilayah'
+                                          ? 'font-medium text-[#0F172A]'
+                                          : 'text-slate-600'
+                                      }`}
+                                    >
+                                      {nilai !== undefined && nilai !== null ? String(nilai) : '-'}
+                                    </td>
+                                  )
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
 
             <div className="mt-6 flex items-center justify-end gap-2.5 border-t border-slate-100 pt-4">
@@ -1376,15 +1766,21 @@ export default function NarasiLaporanView({
               <button
                 type="button"
                 onClick={() => {
-                  tambahDataset(modalDatasetDetail)
+                  if (datasetDiDaftarModal) {
+                    ubahTahunDataset(modalDatasetDetail.uuid, tahunPilihanModal)
+                    if (onShowToast) {
+                      const labelTahun =
+                        tahunPilihanModal === 'all' ? 'Semua Tahun' : `Tahun ${tahunPilihanModal}`
+                      onShowToast(`Pilihan tahun diperbarui (${labelTahun}).`)
+                    }
+                  } else {
+                    tambahDataset(modalDatasetDetail, tahunPilihanModal)
+                  }
                   setModalDatasetDetail(null)
                 }}
-                disabled={datasetTerpilih.some((d) => d.uuid === modalDatasetDetail.uuid)}
-                className="rounded-xl bg-[#DC2626] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#991B1B] disabled:bg-emerald-600"
+                className="rounded-xl bg-[#DC2626] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#991B1B]"
               >
-                {datasetTerpilih.some((d) => d.uuid === modalDatasetDetail.uuid)
-                  ? 'Sudah Terpilih'
-                  : '+ Tambahkan ke Daftar Narasi'}
+                {datasetDiDaftarModal ? 'Simpan Pilihan Tahun' : '+ Tambahkan ke Daftar Narasi'}
               </button>
             </div>
           </div>
